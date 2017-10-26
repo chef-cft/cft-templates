@@ -35,7 +35,7 @@ Parameters:
 
   zworkstation:
     Type: String
-    Default: ami-d3dee9b5
+    Default: ami-b7e93bce
     Description: AMI ID for the Windows workstation - this is Windows Server 2012 R2
 
 ## AMIs END ##
@@ -77,7 +77,7 @@ Parameters:
   chefOrg:
     Description: The organisation to create on the Chef Server, this is the shortname
     Type: String
-  
+
   chefOrgDescription:
     Description: Description of the Chef organisation
     Type: String
@@ -86,22 +86,17 @@ Parameters:
   chefDKVersion:
     Description: Chef DK version to install on the workstation
     Type: String
-    Default: 1.2.22
-  
+    Default: 2.3.4
+
   chefVersion:
     Description: Chef Server version to install
     Type: String
-    Default: 12.14.0
+    Default: 12.17.5
 
   automateVersion:
     Description: Automate Server version to install
     Type: String
-    Default: 0.7.85
-
-  complianceVersion:
-    Description: Compliance Server version to install
-    Type: String
-    Default: 1.8.12
+    Default: 1.7.10
 
   # Workstation setup
   chefRepoUrl:
@@ -112,7 +107,7 @@ Parameters:
   spnDetails:
     Description: Details required to create the aws config file on the workstation
     Type: String
-      
+
 
 ## RESOURCES SECTION ##
 
@@ -180,7 +175,7 @@ Resources:
         Ref: SubnetDefault
       RouteTableId:
         Ref: RouteTable
-  
+
  # Network ACLs #
   NetworkAcl:
     Type: AWS::EC2::NetworkAcl
@@ -218,7 +213,7 @@ Resources:
         Ref: SubnetDefault
       NetworkAclId:
         Ref: NetworkAcl
-  
+
   # Security group
   AutomateSecurityGroup:
     Type: AWS::EC2::SecurityGroup
@@ -303,7 +298,7 @@ Resources:
       Tags:
       - Key: Name
         Value: !Sub ${Prefix} Automate Cluster orchestration server
-    
+
   chefserver:
     DependsOn: orchestration
     Type: AWS::EC2::Instance
@@ -325,7 +320,7 @@ Resources:
           cd /tmp
           wget ${setupScriptUrl}
           chmod u+x ./setup-ctl.sh
-          ./setup-ctl.sh -m chef-install,chef-configure --chef-version ${chefVersion} -u ${userName} -f "${userFullname}" -p ${userPassword} -e ${userEmailaddress} -o ${chefOrg} -d ${chefOrgDescription} -O ${orchestration.PrivateIp}:4001 -s https://$PUBLIC_DNSNAME/organizations/${chefOrg} -w 
+          ./setup-ctl.sh -m chef-install,chef-configure --chef-version ${chefVersion} -u ${userName} -f "${userFullname}" -p ${userPassword} -e ${userEmailaddress} -o ${chefOrg} -d ${chefOrgDescription} -O ${orchestration.PrivateIp}:4001 -s https://$PUBLIC_DNSNAME/organizations/${chefOrg} -w
       InstanceType: c3.large
       AvailabilityZone: eu-west-1b
       BlockDeviceMappings:
@@ -351,7 +346,7 @@ Resources:
       - Key: Name
         Value: !Sub ${Prefix} Automate Cluster Chef server
 
-    
+
   automateserver:
     DependsOn: chefserver
     Type: AWS::EC2::Instance
@@ -406,62 +401,29 @@ Resources:
       - Key: Name
         Value: !Sub ${Prefix} Automate Cluster Automate server
 
-    
-  complianceserver:
+  workstation:
     DependsOn: chefserver
     Type: AWS::EC2::Instance
     Properties:
       UserData:
         Fn::Base64: !Sub |
-          #!/bin/bash -xe
-
-          # Allow time for the chef server to complete
-          sleep 300
-
-          # Get the local IP address, public DNS name and thus the hostname from user data
-          LOCAL_IPV4=`curl curl http://169.254.169.254/latest/meta-data/local-ipv4 2> /dev/null`
-          PUBLIC_DNSNAME=`curl http://169.254.169.254/latest/meta-data/public-hostname 2> /dev/null`
-          HOSTNAME=`echo $PUBLIC_DNSNAME | cut -d. -f 1`
-
-          # Set the hostname of the machine as well as the FQDN
-          echo $HOSTNAME > /etc/hostname
-          sed -i "s/^127\.0\.0\.1\s*localhost/127.0.0.1 $PUBLIC_DNSNAME $HOSTNAME/" /etc/hosts
-          hostname -F /etc/hostname
-
-          # Download the setup script and execute
-          cd /tmp
-          wget ${setupScriptUrl}
-          chmod u+x ./setup-ctl.sh 
-          ./setup-ctl.sh -m compliance-install,compliance-configure --compliance-version ${complianceVersion} -O ${orchestration.PrivateIp}:4001 -u ${userName} -p ${userPassword}
-      InstanceType: c3.large
-      AvailabilityZone: eu-west-1b
-      BlockDeviceMappings:
-        - DeviceName: "/dev/sda1"
-          Ebs:
-            VolumeSize: '50'
-            VolumeType: gp2
-            DeleteOnTermination: 'true'
-      NetworkInterfaces:
-      - GroupSet:
-        - Ref: AutomateSecurityGroup
-        AssociatePublicIpAddress: 'true'
-        PrivateIpAddress: 10.0.0.7
-        DeviceIndex: '0'
-        DeleteOnTermination: 'true'
-        SubnetId:
-          Ref: SubnetDefault
-      KeyName:
-        Ref: KeyName
-      ImageId:
-        Ref: zCurrentUbuntu
-      Tags:
-      - Key: Name
-        Value: !Sub ${Prefix} Automate Cluster Compliance server
-
-  workstation:
-    DependsOn: chefserver
-    Type: AWS::EC2::Instance
-    Properties:
+          <powershell>
+            $admin = [adsi]("WinNT://./Administrator, user")
+            $admin.psbase.invoke("SetPassword", "Cod3Can!")
+            winrm qc -q
+            winrm set winrm/config '@{MaxTimeoutms="1800000"}'
+            winrm set winrm/config/service '@{AllowUnencrypted="true"}'
+            winrm set winrm/config/service/auth '@{Basic="true"}'
+            Set-Item wsman:localhost\client\trustedhosts -value * -force
+            Get-NetFirewallProfile | Set-NetFirewallProfile -Enabled False
+            net stop winrm
+            sc.exe config winrm start=auto
+            net start winrm
+            $scriptURL = "https://raw.githubusercontent.com/chef-partners/arm-templates/master/solutions/nested/scripts/windows-workstation.ps1"
+            $outFile = "c:\bootstrap.ps1"
+            Invoke-WebRequest $scriptURL -OutFile $outFile
+            c:\bootstrap.ps1 -operation "chefdk,chefrepo,chefclient" -chefdk_version ${chefDKVersion} -chef_repo_url "${chefRepoUrl}" -chef_org "${chefOrg}" -chef_server_url "https://${chefserver.PublicDnsName}/organizations/${chefOrg}" -chef_user "${userName}" -windows_user "Administrator" -windows_password "Cod3Can!" -automateServerFQDN "${automateserver.PublicDnsName}" -automateServerUrl "https://${automateserver.PublicDnsName}/" > windows-workstation.log
+          </powershell>
       InstanceType: m4.large
       AvailabilityZone: eu-west-1b
       BlockDeviceMappings:
@@ -489,9 +451,9 @@ Resources:
         Value: !Sub ${Prefix} Automate Cluster workstation
 
 ## OUTPUTS ##
-  
+
 Outputs:
-  
+
   workstationPubDNS:
     Description: Public DNS of the workstation
     Value:
@@ -511,11 +473,4 @@ Outputs:
     Value:
       Fn::GetAtt:
       - automateserver
-      - PublicDnsName
-
-  complianceserverPubDNS:
-    Description: Public DNS of the Compliance Server
-    Value:
-      Fn::GetAtt:
-      - complianceserver
       - PublicDnsName
